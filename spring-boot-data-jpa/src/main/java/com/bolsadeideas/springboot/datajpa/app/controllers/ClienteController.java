@@ -1,13 +1,24 @@
 package com.bolsadeideas.springboot.datajpa.app.controllers;
 
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.http.HttpHeaders;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
+import java.util.UUID;
 
 import javax.validation.Valid;
 
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
@@ -18,9 +29,8 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.SessionAttributes;
 import org.springframework.web.bind.support.SessionStatus;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
-
-import com.bolsadeideas.springboot.datajpa.app.models.dao.IClienteDao;
 import com.bolsadeideas.springboot.datajpa.app.models.entity.Cliente;
 import com.bolsadeideas.springboot.datajpa.app.models.service.IClienteService;
 import com.bolsadeideas.springboot.datajpa.app.util.paginator.PageRender;
@@ -31,6 +41,44 @@ public class ClienteController {
 	
 	@Autowired
 	private IClienteService clienteService;
+	
+	private final Logger log = org.slf4j.LoggerFactory.getLogger(getClass()); 
+	
+	@RequestMapping(value = "/uploads/{filename:.+}")
+	public ResponseEntity<Resource> verFoto(@PathVariable String filename ){
+		
+		Path pathFoto = Paths.get("uploads").resolve(filename).toAbsolutePath(); 
+		log.info("pathFoto: " + pathFoto);
+		Resource recurso = null;
+		try {
+			 recurso = new UrlResource(pathFoto.toUri());
+			 if(!recurso.exists() || !recurso.isReadable()) {
+				 throw new RuntimeException("Error: no se puede cargar la imagen: " + pathFoto.toString());
+			 }
+		} catch (MalformedURLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		return ResponseEntity.ok().header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\""+ recurso.getFilename() +"\"").
+				body(recurso);
+		
+	}
+	
+	@RequestMapping(value = "/ver/{id}")
+	public String ver(@PathVariable(value = "id")Long id, Map<String, Object> model, RedirectAttributes flash) {
+		
+		Cliente cliente = clienteService.findOne(id);
+		if(cliente == null) {
+			flash.addFlashAttribute("error", "El cliente no existe en la base dedatos");
+			return "redirect:/listar";
+		}
+			model.put("cliente", cliente);
+			model.put("titulo", "Detalle cliente: " + cliente.getNombre());
+			
+			return "ver";
+	}
+	
 
 	@RequestMapping(value = "/listar", method = RequestMethod.GET)
 	public String listar(@RequestParam(name = "page", defaultValue = "0") int page, Model model) {
@@ -79,11 +127,35 @@ public class ClienteController {
 	}
 	
 	@RequestMapping(value = "/form", method = RequestMethod.POST)
-	public String guardar(@Valid Cliente cliente, BindingResult result, Model model, RedirectAttributes flash , SessionStatus status) {
+	public String guardar(@Valid Cliente cliente, BindingResult result, Model model, @RequestParam("file") MultipartFile foto , RedirectAttributes flash , SessionStatus status) {
 		
 		if(result.hasErrors()) {
 			model.addAttribute("titulo", "Formulario de Cliente");
 			return "form";
+		}
+		
+		if(!foto.isEmpty()) {
+
+			String uniqueFileName = UUID.randomUUID().toString() + "_" + foto.getOriginalFilename();
+			Path rootPath = Paths.get("uploads").resolve(uniqueFileName);
+			
+			Path rootAbsolutPath = rootPath.toAbsolutePath();
+			
+			log.info("rootPath: " + rootPath);
+			log.info("rootAbsolutPath: " + rootAbsolutPath);
+					
+			try {
+				
+				Files.copy(foto.getInputStream(), rootAbsolutPath );
+				
+				flash.addFlashAttribute("info", "Has subido correctamente '" + uniqueFileName + "'");
+				
+				cliente.setFoto(uniqueFileName);
+				
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
 		
 		String mensajeFlash = (cliente.getId() != null) ? "Cliente editado con exito!" : "Cliente creado con exito!"; 
